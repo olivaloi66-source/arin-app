@@ -1,0 +1,46 @@
+name: Build ARIN APK
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Stable signing key (made once, reused every build)
+        run: |
+          if [ ! -f arin.keystore ]; then
+            keytool -genkeypair -keystore arin.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=ARIN,O=ARIN,C=BD"
+            git config user.name "arin-bot"
+            git config user.email "arin-bot@users.noreply.github.com"
+            git add arin.keystore
+            git commit -m "add signing key"
+            git push
+          fi
+          mkdir -p ~/.android
+          cp arin.keystore ~/.android/debug.keystore
+      - name: Create Android app
+        run: |
+          mkdir www
+          cp index.html www/index.html
+          npm init -y
+          npm i @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/filesystem@7 @capacitor/share@7
+          npx cap init ARIN com.arin.assistant --web-dir=www
+          npx cap add android
+          sed -i 's#<application#<uses-permission android:name="android.permission.RECORD_AUDIO"/>\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>\n    <application#' android/app/src/main/AndroidManifest.xml
+          sed -i "s/versionCode 1/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          npx cap sync android
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ARIN-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
